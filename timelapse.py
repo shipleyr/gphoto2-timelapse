@@ -16,10 +16,14 @@ import subprocess
 import sun
 
 # the time between photos
-#DELTA = timedelta(seconds = 20)
-DELTA = timedelta(minutes = 5)
+DELTA = timedelta(seconds = 20)
+# DELTA = timedelta(minutes = 1)
 picture_folder = '/home/pi/gphoto2-timelapse/photos'
+usb_bus = ''
+usb_device = ''
+
 DEBUG = False
+LOG = False
 ignore_sun = True
 
 def parse_int(s) :
@@ -55,12 +59,13 @@ prefix = get_prefix()
 # prefix = ''
 
 def log(message) :
-  print datetime.utcnow(), message
+  if LOG :
+    print datetime.utcnow(), message
 
 def run(cmd) :
-  reset_nikon()
+  reset_canon()
   
-  # try running the command once and if it fails, reset_nikon
+  # try running the command once and if it fails, reset_canon
   # and then try once more
   for i in range(2) :
     log("running %s" % cmd)
@@ -101,22 +106,25 @@ def run(cmd) :
         # other error like tried to delete a file where there was none, etc
         return ret, stdout, stderr
     else :
-      reset_nikon()
+      reset_canon()
   
   return ret, stdout, stderr
 
-def reset_nikon() :
+def reset_canon() :
   log('reset usb')
   
   import os
   
   ret = os.popen('lsusb').read()
   for line in ret.split('\n') :
-    if 'Nikon' not in line : continue
-    
-    ret = os.popen("./usbreset /dev/bus/usb/%s/%s" % (line[4:7], line[15:18])).read()
+    if 'Canon' not in line : continue
+
+    usb_bus = line[4:7]
+    usb_device = line[15:18]
+
+    ret = os.popen("./usbreset /dev/bus/usb/%s/%s" % (usb_bus, usb_device)).read()
     if 'successful' not in ret :
-      print 'ret', ret
+        print 'ret', ret
 
 import re
 
@@ -141,50 +149,17 @@ def list_files() :
   
   return files
 
-workaround = True
+workaround = False
 def take_picture(filename = None) :
   if not filename :
     filename = prefix + '_' + datetime.utcnow().strftime("%Y%m%d-%H%M%S.jpg")
   
   log('taking picture')
-  if workaround :
-    # this works around --capture-image-and-download not working
-    # get rid of any existing files on the card
-    for folder, number, _ in list_files() :
-      delete_picture(from_folder = folder)
-    
-    # take the picture
-    run("gphoto2 --capture-image")
-    
-    # copy the picture from the camera to local disk
-    run("gphoto2 --get-file=1 --filename=%s/%s" % (picture_folder, filename))
-    
-    ## delete file off of camera
-    #delete_picture()
-  else :
-    return run("gphoto2 --capture-image-and-download --filename %s/%s" % (picture_folder, filename))
-
-def delete_picture(from_folder = None) :
-  log('deleting picture')
-  
-  if from_folder :
-    print 'from_folder', from_folder
-    ret, stdout, stderr = run("gphoto2 --delete-file=1 --folder=%s" % from_folder)
-    if 'There are no files in folder' in stdout :
-      return ret
-  
-  # try deleting from all 3 known folders, in the order of most likely
-  ret, stdout, stderr = run("gphoto2 --delete-file=1 --folder=/store_00010001")
-  if 'There are no files in folder' in stderr :
-    ret, stdout, stderr = run("gphoto2 --delete-file=1 --folder=/store_00010001/DCIM/100NIKON")
-    if 'There are no files in folder' in stderr :
-      ret, stdout, stderr = run("gphoto2 --delete-file=1 --folder=/")
-  
-  return ret
+  return run("gphoto2 --capture-image-and-download --filename %s/%s" % (picture_folder, filename))
 
 def reset_settings() :
   log('reseting settings')
-  run("gphoto2 --set-config /main/capturesettings/flashmode=1")
+  # run("gphoto2 --set-config /main/capturesettings/flashmode=1")
   run("gphoto2 --set-config /main/capturesettings/focusmode=0")
 
 reset_settings()
@@ -194,7 +169,7 @@ while True :
   
   # only take pictures when it is light out
   if sun.is_light(t) or ignore_sun:
-    reset_nikon()
+    reset_canon()
     take_picture()
   else :
     print "Waiting for the sun to come out"  
@@ -202,8 +177,7 @@ while True :
   # remove the picture from camera memory since there isn't much there
   # doing this even if we're waiting for the sun, hoping that it will keep
   # the camera awake
-  reset_nikon()
-  delete_picture()
+  reset_canon()
   
   # wait for 1 minute
   # we can't just do sleep(5 * 60) because taking the picture takes time
